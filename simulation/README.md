@@ -54,8 +54,9 @@ python main.py --bits 3 --p1 0.01 --p2 0.1 --pairs 0-1,1-2
 ### CLI Options
 
 - `--bits`: number of qubits (default: `3`)
-- `--p1`: 1-qubit depolarizing probability (default: `0.01`)
-- `--p2`: 2-qubit depolarizing probability (default: `0.1`)
+- `--p1`: 1-qubit noise parameter (default: `0.01`)
+- `--p2`: 2-qubit noise parameter (default: `0.1`)
+- `--noise-model`: noise family (`depolarizing`, `amplitude`, `phase`), default: `depolarizing`
 - `--pairs`: comma-separated qubit pairs for 2-qubit Kraus noise (default: `0-1,1-2`)
 
 ## What `main.py` Does
@@ -73,7 +74,13 @@ import numpy as np
 from runner import run, loop_run
 from datadump import dump_result_to_csv
 
-results = run(bits=3, p1=0.01, p2=0.1, pairs=[(0, 1), (1, 2)])
+results = run(
+    bits=3,
+    p1=0.01,
+    p2=0.1,
+    pairs=[(0, 1), (1, 2)],
+    noise_model="depolarizing",
+)
 
 sweep_values = np.arange(0.0, 0.62, 0.02, dtype=float)
 loop_results = loop_run(
@@ -82,6 +89,7 @@ loop_results = loop_run(
     sweep_param="p2",
     sweep_values=sweep_values,
     p1=0.0,
+    noise_model="depolarizing",
 )
 
 df = dump_result_to_csv(loop_results, "out/loop_metrics.csv")

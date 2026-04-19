@@ -28,8 +28,15 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Density-matrix GHZ/W simulation demo")
     parser.add_argument("--bits", type=int, default=3, help="Number of qubits for GHZ/W circuits")
-    parser.add_argument("--p1", type=float, default=0.01, help="1-qubit depolarizing probability")
-    parser.add_argument("--p2", type=float, default=0.1, help="2-qubit depolarizing probability")
+    parser.add_argument("--p1", type=float, default=0.01, help="1-qubit noise parameter")
+    parser.add_argument("--p2", type=float, default=0.1, help="2-qubit noise parameter")
+    parser.add_argument(
+        "--noise-model",
+        type=str,
+        default="depolarizing",
+        choices=["depolarizing", "amplitude", "phase"],
+        help="Noise model family for both Kraus and Aer pipelines",
+    )
     parser.add_argument(
         "--pairs",
         type=str,
@@ -85,7 +92,13 @@ def main() -> None:
     
     
     
-    results = run(bits=args.bits, p1=args.p1, p2=args.p2, pairs=pairs)
+    results = run(
+        bits=args.bits,
+        p1=args.p1,
+        p2=args.p2,
+        pairs=pairs,
+        noise_model=args.noise_model,
+    )
     #plot_results(results)
     
     plot_density_matrix_heatmap_plotly(results, width=800, height=1200)
@@ -106,7 +119,14 @@ def main() -> None:
     
     # paramter sweep
     p2 = np.arange(0.0, 0.62, 0.02, dtype=float)
-    lr = loop_run(bits=3, pairs=[(0,1),(1,2)], sweep_param="p2", sweep_values=p2, p1=0.0)
+    lr = loop_run(
+        bits=3,
+        pairs=[(0, 1), (1, 2)],
+        sweep_param="p2",
+        sweep_values=p2,
+        p1=0.0,
+        noise_model=args.noise_model,
+    )
     df2 = dump_result_to_csv(lr, "out/loop_metrics.csv")
     
     print(df2.head())

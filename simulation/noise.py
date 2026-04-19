@@ -10,7 +10,9 @@ from qiskit.quantum_info import DensityMatrix, Kraus
 from qiskit_aer.noise import (
     NoiseModel,
     ReadoutError,
+    amplitude_damping_error,
     depolarizing_error,
+    phase_damping_error,
     thermal_relaxation_error,
 )
 
@@ -45,6 +47,7 @@ def build_noise_model(
     mode: str,
     p1: float = 0.01,
     p2: float = 0.02,
+    noise_type: str = "depolarizing",
     t1: float = 100e3,
     t2: float = 80e3,
     t_1q: float = 50,
@@ -59,9 +62,13 @@ def build_noise_model(
         ``"cx_only"``, ``"single_only"``, ``"readout_only"``,
         ``"all"``, ``"all_thermal"``, and ``"ideal"``.
     p1 : float, optional
-        1-qubit depolarizing probability.
+        1-qubit noise parameter.
     p2 : float, optional
-        2-qubit depolarizing probability.
+        2-qubit noise parameter.
+    noise_type : str, optional
+        Quantum-error channel family used for ``"cx_only"``, ``"single_only"``,
+        and ``"all"`` modes. Supported values are ``"depolarizing"``,
+        ``"amplitude"``, and ``"phase"``.
     t1 : float, optional
         T1 relaxation time for thermal noise.
     t2 : float, optional
@@ -79,22 +86,42 @@ def build_noise_model(
     Raises
     ------
     ValueError
-        If ``mode`` is not supported.
+        If ``mode`` or ``noise_type`` is not supported.
     """
     noise_model = NoiseModel()
+    normalized_noise = noise_type.strip().lower()
+
+    def _build_errors() -> tuple[Any, Any]:
+        if normalized_noise == "depolarizing":
+            return (
+                depolarizing_error(p1, 1), 
+                depolarizing_error(p2, 2),
+            )
+        if normalized_noise == "amplitude":
+            return (
+                amplitude_damping_error(p1),
+                amplitude_damping_error(p2).tensor(amplitude_damping_error(p2)),
+            )
+        if normalized_noise == "phase":
+            return (
+                phase_damping_error(p1),
+                phase_damping_error(p2).tensor(phase_damping_error(p2)),
+            )
+        raise ValueError(
+            "Unsupported noise_type. Use 'depolarizing', 'amplitude', or 'phase'."
+        )
 
     if mode == "cx_only":
-        error_2q = depolarizing_error(p2, 2)
+        _, error_2q = _build_errors()
         noise_model.add_all_qubit_quantum_error(error_2q, ["cx"])
     elif mode == "single_only":
-        error_1q = depolarizing_error(p1, 1)
+        error_1q, _ = _build_errors()
         noise_model.add_all_qubit_quantum_error(error_1q, ["h", "x", "ry", "rz"])
     elif mode == "readout_only":
         ro = ReadoutError([[0.98, 0.02], [0.03, 0.97]])
         noise_model.add_all_qubit_readout_error(ro)
     elif mode == "all":
-        error_1q = depolarizing_error(p1, 1)
-        error_2q = depolarizing_error(p2, 2)
+        error_1q, error_2q = _build_errors()
         noise_model.add_all_qubit_quantum_error(error_1q, ["h", "x", "ry", "rz"])
         noise_model.add_all_qubit_quantum_error(error_2q, ["cx", "cry"])
     elif mode == "all_thermal":
@@ -180,6 +207,98 @@ def depolarizing_kraus_2q(p: float) -> list[np.ndarray]:
     kraus_ops = [np.sqrt(1 - p) * ops[0]]
     kraus_ops += [np.sqrt(p / 15) * op for op in ops[1:]]
     return kraus_ops
+
+
+def amplitude_damping_kraus_1q(p: float) -> list[np.ndarray]:
+    """Build Kraus operators for a 1-qubit amplitude damping channel.
+
+    Parameters
+    ----------
+    p : float
+        Damping probability in ``[0, 1]``.
+
+    Returns
+    -------
+    list[np.ndarray]
+        List of two ``2x2`` Kraus operators.
+
+    Raises
+    ------
+    ValueError
+        If ``p`` is outside ``[0, 1]``.
+    """
+    if not (0.0 <= p <= 1.0):
+        raise ValueError("p must be in [0, 1].")
+
+    k0 = np.array([[1.0, 0.0], [0.0, np.sqrt(1.0 - p)]], dtype=complex)
+    k1 = np.array([[0.0, np.sqrt(p)], [0.0, 0.0]], dtype=complex)
+    return [k0, k1]
+
+
+def amplitude_damping_kraus_2q(p: float) -> list[np.ndarray]:
+    """Build Kraus operators for a 2-qubit amplitude damping channel.
+
+    This models independent amplitude damping on each qubit with the same
+    damping probability ``p``.
+
+    Parameters
+    ----------
+    p : float
+        Damping probability in ``[0, 1]``.
+
+    Returns
+    -------
+    list[np.ndarray]
+        List of four ``4x4`` Kraus operators.
+    """
+    ops_1q = amplitude_damping_kraus_1q(p)
+    return [np.kron(a, b) for a, b in product(ops_1q, ops_1q)]
+
+
+def phase_damping_kraus_1q(p: float) -> list[np.ndarray]:
+    """Build Kraus operators for a 1-qubit phase damping channel.
+
+    Parameters
+    ----------
+    p : float
+        Dephasing probability in ``[0, 1]``.
+
+    Returns
+    -------
+    list[np.ndarray]
+        List of two ``2x2`` Kraus operators.
+
+    Raises
+    ------
+    ValueError
+        If ``p`` is outside ``[0, 1]``.
+    """
+    if not (0.0 <= p <= 1.0):
+        raise ValueError("p must be in [0, 1].")
+
+    k0 = np.array([[1.0, 0.0], [0.0, np.sqrt(1.0 - p)]], dtype=complex)
+    k1 = np.array([[0.0, 0.0], [0.0, np.sqrt(p)]], dtype=complex)
+    return [k0, k1]
+
+
+def phase_damping_kraus_2q(p: float) -> list[np.ndarray]:
+    """Build Kraus operators for a 2-qubit phase damping channel.
+
+    This models independent phase damping on each qubit with the same
+    dephasing probability ``p``.
+
+    Parameters
+    ----------
+    p : float
+        Dephasing probability in ``[0, 1]``.
+
+    Returns
+    -------
+    list[np.ndarray]
+        List of four ``4x4`` Kraus operators.
+    """
+    ops_1q = phase_damping_kraus_1q(p)
+    return [np.kron(a, b) for a, b in product(ops_1q, ops_1q)]
 
 
 def apply_noise_all_qubits(

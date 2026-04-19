@@ -11,11 +11,15 @@ from qiskit.quantum_info import DensityMatrix, partial_trace
 from metrics import concurrence, fidelity, monogamy, von_neumann_entropy
 
 from noise import (
+    amplitude_damping_kraus_1q,
+    amplitude_damping_kraus_2q,
     apply_noise_all_qubits,
     apply_noise_pairs,
     build_noise_model,
     depolarizing_kraus_1q,
     depolarizing_kraus_2q,
+    phase_damping_kraus_1q,
+    phase_damping_kraus_2q,
 )
 from simulation import run_circuit_simulation
 from states import (
@@ -130,7 +134,25 @@ def _compute_metrics(
     }
 
 
-def run(bits: int, p1: float, p2: float, pairs: list[tuple[int, int]]) -> RunResults:
+def _select_kraus_fns(noise_model: str):
+    """Pick matching 1q/2q Kraus builders for the requested noise model."""
+    normalized = noise_model.strip().lower()
+    if normalized == "depolarizing":
+        return depolarizing_kraus_1q, depolarizing_kraus_2q
+    if normalized == "amplitude":
+        return amplitude_damping_kraus_1q, amplitude_damping_kraus_2q
+    if normalized == "phase":
+        return phase_damping_kraus_1q, phase_damping_kraus_2q
+    raise ValueError("noise_model must be 'depolarizing', 'amplitude', or 'phase'.")
+
+
+def run(
+    bits: int,
+    p1: float,
+    p2: float,
+    pairs: list[tuple[int, int]],
+    noise_model: str = "depolarizing",
+) -> RunResults:
     """Run GHZ and W density-matrix demos and return noisy outputs.
 
     Parameters
@@ -138,11 +160,14 @@ def run(bits: int, p1: float, p2: float, pairs: list[tuple[int, int]]) -> RunRes
     bits : int
         Number of qubits for circuit-based GHZ/W state preparation.
     p1 : float
-        1-qubit depolarizing probability.
+        1-qubit noise parameter.
     p2 : float
-        2-qubit depolarizing probability.
+        2-qubit noise parameter.
     pairs : list[tuple[int, int]]
         Qubit pairs for 2-qubit Kraus noise application.
+    noise_model : str, optional
+        Noise model family. Supported values are ``"depolarizing"``,
+        ``"amplitude"``, and ``"phase"``. Default is ``"depolarizing"``.
 
     Returns
     -------
@@ -151,18 +176,19 @@ def run(bits: int, p1: float, p2: float, pairs: list[tuple[int, int]]) -> RunRes
         ``results[state]["pure_kraus"]`` and ``results[state]["circuit_aer"]``.
         Calculated metrics are available at ``results[state]["metrics"]``.
     """
-    noise_model = build_noise_model(mode="all", p1=p1, p2=p2)
+    kraus_1q_fn, kraus_2q_fn = _select_kraus_fns(noise_model)
+    aer_noise_model = build_noise_model(mode="all", p1=p1, p2=p2, noise_type=noise_model)
     results: RunResults = {}
 
     for state in ("ghz", "w"):
         # Pure state + Kraus noise
         pure_state = build_pure_state(state, bits)
-        pure_state_noisy = apply_noise_all_qubits(pure_state, depolarizing_kraus_1q, p1)
-        pure_state_noisy = apply_noise_pairs(pure_state_noisy, depolarizing_kraus_2q, p2, pairs=pairs)
+        pure_state_noisy = apply_noise_all_qubits(pure_state, kraus_1q_fn, p1)
+        pure_state_noisy = apply_noise_pairs(pure_state_noisy, kraus_2q_fn, p2, pairs=pairs)
 
         # Circuit + Aer noise model
         circuit = build_state_circuit(state, bits)
-        circuit_noisy = run_circuit_simulation(circuit, noise_model=noise_model, shots=10000)
+        circuit_noisy = run_circuit_simulation(circuit, noise_model=aer_noise_model, shots=10000)
 
         results[state] = {
             "pure_kraus": pure_state_noisy,
@@ -184,6 +210,7 @@ def loop_run(
     sweep_values: Iterable[float],
     p1: float = 0.01,
     p2: float = 0.10,
+    noise_model: str = "depolarizing",
 ) -> LoopRunResults:
     """Run GHZ/W simulations by sweeping one noise parameter.
 
@@ -200,9 +227,11 @@ def loop_run(
     sweep_values : Iterable[float]
         Values used for the selected sweep parameter.
     p1 : float, optional
-        Baseline 1-qubit depolarizing probability. Used when sweeping ``p2``.
+        Baseline 1-qubit noise parameter. Used when sweeping ``p2``.
     p2 : float, optional
-        Baseline 2-qubit depolarizing probability. Used when sweeping ``p1``.
+        Baseline 2-qubit noise parameter. Used when sweeping ``p1``.
+    noise_model : str, optional
+        Noise model family passed through to ``run``.
 
     Returns
     -------
@@ -222,8 +251,12 @@ def loop_run(
     for value in sweep_values:
         sweep_value = float(value)
         if sweep_param == "p1":
-            all_results[sweep_value] = run(bits=bits, p1=sweep_value, p2=p2, pairs=pairs)
+            all_results[sweep_value] = run(
+                bits=bits, p1=sweep_value, p2=p2, pairs=pairs, noise_model=noise_model
+            )
         else:
-            all_results[sweep_value] = run(bits=bits, p1=p1, p2=sweep_value, pairs=pairs)
+            all_results[sweep_value] = run(
+                bits=bits, p1=p1, p2=sweep_value, pairs=pairs, noise_model=noise_model
+            )
 
     return all_results
